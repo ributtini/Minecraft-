@@ -2,41 +2,42 @@ name: Ubuntu Keepalive (max)
 
 on:
   workflow_dispatch: {}
-  # Backup scheduler (UTC). 0 */6 artinya tiap 6 jam, sebagai cadangan jika self-dispatch gagal.
+  # Backup scheduler (UTC) setiap 6 jam
   schedule:
     - cron: "0 */6 * * *"
 
 permissions:
   contents: read
-  actions: write     # diperlukan untuk memicu workflow sendiri (workflow_dispatch API)
+  actions: write
 
 concurrency:
   group: ubuntu-keepalive
-  cancel-in-progress: false   # biar run berikutnya antre, tidak saling bunuh
+  cancel-in-progress: false
 
 jobs:
   keepalive:
     name: Runner Ubuntu hidup semaksimal mungkin
     runs-on: ubuntu-latest
-    timeout-minutes: 360   # batas maksimal job GitHub-hosted
+    timeout-minutes: 360
+
     steps:
       - name: Info OS
         run: |
           uname -a
           cat /etc/os-release
-          echo "Start at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+          date -u +"Start at: %Y-%m-%d %H:%M:%S UTC"
 
-      # ====== TASK ANDA DI SINI (opsional) ======
+      # ====== TARUH TUGAS ANDA DI SINI (opsional) ======
       # - name: Kerjakan sesuatu
       #   run: bash your_script.sh
 
       - name: Keep alive ~355 menit (heartbeat tiap 60 detik)
         env:
-          TOTAL_MINUTES: "355"   # sisakan buffer agar tidak kena timeout keras
+          TOTAL_MINUTES: "355"
         run: |
           mins=0
           while [ "$mins" -lt "$TOTAL_MINUTES" ]; do
-            echo "[Heartbeat] $(date -u +"%F %T UTC") - menit ke-$mins"
+            printf "[Heartbeat] %s - menit ke-%s\n" "$(date -u +"%F %T UTC")" "$mins"
             sleep 60
             mins=$((mins+1))
           done
@@ -44,18 +45,22 @@ jobs:
       - name: Self-dispatch run berikutnya (chain)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER: ${{ github.repository_owner }}
-          REPO: ${{ github.event.repository.name }}
+          REPO_FULL: ${{ github.repository }}   # format: owner/repo
           REF: ${{ github.ref_name }}
           WORKFLOW_FILE: "ubuntu-keepalive.yml"
         run: |
-          echo "Memicu run berikutnya di $OWNER/$REPO (ref: $REF)"
-          curl -sSL -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
+          echo "Memicu run berikutnya di ${REPO_FULL} (ref: ${REF})"
+
+          # Susun payload JSON tanpa perlu escape kutip
+          printf '{ "ref": "%s" }\n' "${REF}" > payload.json
+
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches \
-            -d "{\"ref\":\"${REF}\"}"
+            "https://api.github.com/repos/${REPO_FULL}/actions/workflows/${WORKFLOW_FILE}/dispatches" \
+            --data @payload.json
+
           echo "Selesai memicu workflow selanjutnya."
 
       - name: Ringkas waktu selesai
-        run: echo "Finish at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+        run: date -u +"Finish at: %Y-%m-%d %H:%M:%S UTC"
